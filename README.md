@@ -24,7 +24,7 @@ Note that we also release the [filtered data](http://data.statmt.org/prism/prism
 
 # Installation
 
-Create conda environment, install dependencies, and download LASER and LID model: (you will need gcc to run these commands)
+Create conda environment, install dependencies, and download LASER and LID model: (note:[you will need gcc](https://github.com/facebookresearch/fastText/issues/1196) to run these commands)
 ```bash
 conda create -y --name prismfilt python=3.8
 conda activate prismfilt  # older conda versions: `source activate prismfilt`
@@ -34,8 +34,8 @@ conda install -y -c pytorch pytorch==1.9.0
 conda install -y -c conda-forge sentencepiece==0.1.95
 conda install -y pandas==1.2.4
 pip install fasttext==0.9.2
-pip install laserembeddings==1.1.1
-pip install laserembeddings[zh,ja]==1.1.1
+pip install laserembeddings==1.1.2
+pip install laserembeddings[zh,ja]==1.1.2
 python -m laserembeddings download-models
 wget -O lid.176.bin https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin
 ```
@@ -50,7 +50,7 @@ python score.py \
    --tgt_lang de \
    --out_file test.pkl
 ```
-The sentence pairs and their corresponding scores are written to a hdf5 file to be used below. 
+The sentence pairs and their corresponding scores are written to a pickle file to be used below. 
 Note there is no distinction between src and tgt languages, except to keep track of which is which. 
 
 To see an example of the scores, run the following in a python prompt:
