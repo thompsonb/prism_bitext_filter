@@ -8,15 +8,46 @@ import os
 import shutil
 import urllib.request
 from collections import Counter
-from time import time
 
 import faiss
 import fasttext
 import pandas
 import numpy as np
 import sentencepiece as spm
+import torch
+
 from laserembeddings import Laser
 from scipy.spatial.distance import cosine as cosine_dist
+
+
+# modified from https://github.com/facebookresearch/LASER/blob/main/source/mine_bitexts.py
+def knnGPU(x, y, k, mem=5*1024*1024*1024):
+    dim = x.shape[1]
+    batch_size = mem // (dim*4)
+    sim = np.zeros((x.shape[0], k), dtype=np.float32)
+    ind = np.zeros((x.shape[0], k), dtype=np.int64)
+    for xfrom in range(0, x.shape[0], batch_size):
+        xto = min(xfrom + batch_size, x.shape[0])
+        bsims, binds = [], []
+        for yfrom in range(0, y.shape[0], batch_size):
+            yto = min(yfrom + batch_size, y.shape[0])
+            idx = faiss.IndexFlatIP(dim)
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache() 
+                idx = faiss.index_cpu_to_all_gpus(idx)
+            idx.add(y[yfrom:yto])
+            bsim, bind = idx.search(x[xfrom:xto], min(k, yto-yfrom))
+            bsims.append(bsim)
+            binds.append(bind + yfrom)
+            del idx
+        bsims = np.concatenate(bsims, axis=1)
+        binds = np.concatenate(binds, axis=1)
+        aux = np.argsort(-bsims, axis=1)
+        for i in range(xfrom, xto):
+            for j in range(k):
+                sim[i, j] = bsims[i-xfrom, aux[i-xfrom, j]]
+                ind[i, j] = binds[i-xfrom, aux[i-xfrom, j]]
+    return sim, ind
 
 
 laser_langcodes = ['af', 'sq', 'am', 'ar', 'hy', 'ay', 'az', 'eu', 'be', 'bn', 'ber', 'bs', 'br', 
@@ -34,7 +65,6 @@ laser = Laser()
 
 lid_model = fasttext.load_model(lid_model_file)
 
-faiss_nprobe = 64
 margin_score_num_neighbors = 5
 
 faiss.omp_set_num_threads(multiprocessing.cpu_count())
@@ -132,41 +162,6 @@ def normalize(emb):
     return emb
 
 
-def build_index(emb):
-    sqrtN = np.sqrt(emb.shape[0])
-    num_centroids = min(int(4 * sqrtN), emb.shape[0])
-    strx = f'IVF{num_centroids},SQ8'
-
-    index = faiss.index_factory(emb.shape[1], strx)
-
-    train_size = min(32 * num_centroids, emb.shape[0])
-
-    if train_size < emb.shape[0]:
-        print(f'Subsampling in training from {emb.shape[0]} to {train_size}', flush=True)
-        rand_idx = np.random.randint(0, emb.shape[0], train_size)
-        emb_train = emb[rand_idx, :]
-    else:
-        emb_train = emb
-
-
-    print('Training FAISS index...', flush=True)
-    t0 = time()
-    index.train(emb_train)
-    print(f'Trained FAISS index on {emb_train.shape[0]} vectors in {time() - t0:.2f}s', flush=True)
-
-    print('Adding vectors to FAISS index...', flush=True)
-    t0 = time()
-    _step = 10000
-    for ii in range(0, emb.shape[0], _step):
-        jj = min(ii + _step, emb.shape[0])
-        index.add(emb[ii:jj, :])
-    print(f'Added {emb.shape[0]} vectors in in {time() - t0:.2f}s', flush=True)
-
-    return index
-
-
-
-
 def make_blob(stuff,):
     src_line, tgt_line, src_lang, tgt_lang = stuff
     
@@ -220,21 +215,22 @@ def score(src_lines, tgt_lines, src_lang, tgt_lang, do_laser, LID_threshold, fou
     t_to_embed = set()
     
     for blob in blobs:        
-        # save off senteences to embed with laser
+        # save off sentences to embed with laser
         # filter out extreamly long sentences (probably javascrpt or something) so LASER does not hang 
         # also filter out blank lines
         # also filter out lines in the wrong language, which can confuse the margin scores
         # also filter out near copies, which can confuse the margin scores
         if blob['overlap_frac_4gram'] < four_gram_threshold:
-            if 0 < blob['s_len'] < max_LASER_sent_len and blob['s_lid_chunk_score'] > LID_threshold:
+            if 0 < blob['s_len'] < max_LASER_sent_len and blob['s_lid_score'] > LID_threshold:
                 s_to_embed.add(blob['src'])
 
-            if 0 < blob['t_len'] < max_LASER_sent_len and blob['t_lid_chunk_score'] > LID_threshold:
+            if 0 < blob['t_len'] < max_LASER_sent_len and blob['t_lid_score'] > LID_threshold:
                 t_to_embed.add(blob['tgt'])
 
 
     if do_laser:
-        print('Computing LASER embeddings (will be very slow if running on CPU)', flush=True)
+        print('using GPU?', torch.cuda.is_available(), flush=True)            
+        print('Computing LASER embeddings', flush=True)
         # LASER embeddings
 
         s_to_embed = list(s_to_embed)
@@ -246,27 +242,30 @@ def score(src_lines, tgt_lines, src_lang, tgt_lang, do_laser, LID_threshold, fou
         s_hash2idx = {h: ii for ii, h in enumerate(hashes)}
 
         t_to_embed = list(t_to_embed)
-        t_embed = normalize(laser.embed_sentences(t_to_embed, lang=src_lang))
+        t_embed = normalize(laser.embed_sentences(t_to_embed, lang=tgt_lang))
 
         with multiprocessing.Pool(multiprocessing.cpu_count()) as pool:
             hashes = pool.map(compute_hash, t_to_embed)
 
         t_hash2idx = {h: ii for ii, h in enumerate(hashes)}
 
-        print('Building inverted indexes')
-        
-        # built inverted index
-        s_index = build_index(s_embed)
-        t_index = build_index(t_embed)
-        
-        s_index.nprobe = faiss_nprobe
-        t_index.nprobe = faiss_nprobe
+        print('Performing nearest neighbor search', flush=True)
 
-        # Find cosine similarity of the nearest k neighbors (in the other language) for each sentence
-        # Embeddings are normalized so that dot product is cosine similarity
-        s_neighbor_sim = (2.0 - t_index.search(s_embed, k=margin_score_num_neighbors)[0]) / 2.0
-        t_neighbor_sim = (2.0 - s_index.search(t_embed, k=margin_score_num_neighbors)[0]) / 2.0
+        t_sims, t_idxs = knnGPU(t_embed, s_embed, margin_score_num_neighbors, mem=5*1024*1024*1024)
+        s_sims, s_idxs = knnGPU(s_embed, t_embed, margin_score_num_neighbors, mem=5*1024*1024*1024)
+        
+        s_neighbor_sim = (2.0 - s_sims) / 2.0
+        t_neighbor_sim = (2.0 - t_sims) / 2.0
 
+        # make sure FAISS actually found neighbors... 
+        t_fails = np.any(t_idxs==-1, axis=1) # faiss pads with -1 when it does not find anything
+        if sum(t_fails):
+            print(f'WARNING!!! Failed to find {margin_score_num_neighbors} tgt neighbors for {sum(t_fails)} of {len(t_fails)} vectors', flush=True)
+
+        s_fails = np.any(s_idxs==-1, axis=1) # faiss pads with -1 when it does not find anything
+        if sum(s_fails):
+            print(f'WARNING!!! Failed to find {margin_score_num_neighbors} src neighbors for {sum(s_fails)} of {len(s_fails)} vectors', flush=True)
+                    
         # Average the neighbor similarity. /2 so can add in scoring function
         s_norm = s_neighbor_sim.mean(axis=1) / 2.0
         t_norm = t_neighbor_sim.mean(axis=1) / 2.0
@@ -279,7 +278,7 @@ def score(src_lines, tgt_lines, src_lang, tgt_lang, do_laser, LID_threshold, fou
                 cos_sim = 1.0 - cosine_dist(s_embed[s_idx], t_embed[t_idx])
                 laser_score = cos_sim / (s_norm[s_idx] + t_norm[t_idx])
             except KeyError:
-                laser_score = 0
+                laser_score = 0.0
             blob['laser_score'] = laser_score
 
     return blobs
@@ -293,14 +292,14 @@ if __name__ == '__main__':
     parser.add_argument('--src_lang', type=str, required=True, help='Input source language code')
     parser.add_argument('--tgt_lang', type=str, required=True, help='Input target language code')
     parser.add_argument('--out_file', type=str, required=True, help='Output file (pickled pandas DataFrame)')
-    parser.add_argument('--LID_threshold', type=float, default=0.5, help='LASER will only run on sentences where each sentence has an average 4-gram (in subwords) LID score greater than this value. Sentence pairs in the same language can confuse LASER margin scoring (default: %(default)s)')
-    parser.add_argument('--max_LASER_sent_len', type=int, default=2000, help='LASER will only run sentence with length (in subwords) less than this value. Extreamly long sentences can cause LASER to hang (default: %(default)s)')
-    parser.add_argument('--four_gram_threshold', type=float, default=0.6, help='LASER will only run sentence pairs with 4-gram overlap (at the subword leve) below this value. (Near)duplicate sentences can confuse LASER margin scoring (default: %(default)s)')
+    parser.add_argument('--LID_threshold', type=float, default=0.5, help='LASER will only run on sentences with LID scores greater than this value. Sentence pairs in the same language can confuse LASER margin scoring. (default: %(default)s)')
+    parser.add_argument('--max_LASER_sent_len', type=int, default=2000, help='LASER will only run sentence with length (in subwords) less than this value. Extreamly long sentences can cause LASER to hang. (default: %(default)s)')
+    parser.add_argument('--four_gram_threshold', type=float, default=0.6, help='LASER will only run sentence pairs with 4-gram overlap (at the subword leve) below this value. (Near)duplicate sentences can confuse LASER margin scoring. (default: %(default)s)')
 
     args = parser.parse_args()
 
     do_laser = args.src_lang in laser_langcodes and args.tgt_lang in laser_langcodes
-    print('Both langs supported by LASER:', do_laser)
+    print('Both langs supported by LASER:', do_laser, flush=True)
 
     
     blobs = score(src_lines=open(args.src_file, 'rt').readlines(),

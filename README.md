@@ -26,13 +26,8 @@ Note that we also release the [filtered data](http://data.statmt.org/prism/prism
 
 Create conda environment, install dependencies, and download LASER and LID model: (note:[you will need gcc](https://github.com/facebookresearch/fastText/issues/1196) to run these commands)
 ```bash
-conda create -y --name prismfilt python=3.8
+conda create -y --name prismfilt python=3.8 faiss-gpu==1.7.1 scipy==1.6.2 pytorch==1.9.0 sentencepiece==0.1.95 pandas==1.2.4 -c pytorch -c anaconda -c conda-forge # faiss-cpu on CPU
 conda activate prismfilt  # older conda versions: `source activate prismfilt`
-conda install -y -c pytorch faiss-cpu==1.7.1 
-conda install -y -c anaconda scipy==1.6.2
-conda install -y -c pytorch pytorch==1.9.0
-conda install -y -c conda-forge sentencepiece==0.1.95
-conda install -y pandas==1.2.4
 pip install fasttext==0.9.2
 pip install laserembeddings==1.1.2
 pip install laserembeddings[zh,ja]==1.1.2
@@ -62,7 +57,7 @@ pprint(pandas.read_pickle('test.pkl').iloc[0].to_dict())
 
 Which should print something like this:
 ```
-{'laser_score': 1.3791938,
+{'laser_score': 1.33841,
  'overlap_frac_3gram': 0.0,
  'overlap_frac_4gram': 0.0,
  's_len': 25,
@@ -119,12 +114,14 @@ optional arguments:
   --max_4gram_overlap MAX_4GRAM_OVERLAP
                         Maximum allowable fraction of 4-gram overlap (default: 0.4)
   --min_laser_score MIN_LASER_SCORE
-                        Minimum allowable fraction of 3-gram overlap (default: 1.04)
+                        Minimum allowable LASER margin score (default: 1.04)
   --min_lid_score MIN_LID_SCORE
                         Minimum allowable sentence-level language ID score (default: 0.5)
   --min_chunk_lid_score MIN_CHUNK_LID_SCORE
                         Minimum allowable average of 5-gram language ID scores (default: 0.5)
 ```
+
+If your data has more than a few million lines, you will likely want to break up your data into chunks and process them independently. This is due to the LASER margin filtering performing nearest neighbor search, which compares every source vector to every target vector. Anecdotally, processing a few million lines at a time seems to produce about the same results as processing an entire file at once, without running into computational issues. 
 
 
 # Publications

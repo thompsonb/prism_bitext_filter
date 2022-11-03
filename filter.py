@@ -18,7 +18,7 @@ if __name__ == '__main__':
     parser.add_argument('--max_len', type=int, default=200, help='Maximum allowable sentence length (default: %(default)s)' )
     parser.add_argument('--max_3gram_overlap', type=float, default=0.6, help='Maximum allowable fraction of 3-gram overlap (default: %(default)s)' )
     parser.add_argument('--max_4gram_overlap', type=float, default=0.4, help='Maximum allowable fraction of 4-gram overlap (default: %(default)s)' )
-    parser.add_argument('--min_laser_score', type=float, default=1.04, help='Minimum allowable fraction of 3-gram overlap (default: %(default)s)' )
+    parser.add_argument('--min_laser_score', type=float, default=1.04, help='Minimum allowable LASER margin score (default: %(default)s)' )
     parser.add_argument('--min_lid_score', type=float, default=0.5, help='Minimum allowable sentence-level language ID score (default: %(default)s)' )
     parser.add_argument('--min_chunk_lid_score', type=float, default=0.5, help='Minimum allowable average of 5-gram language ID scores (default: %(default)s)' )
 
