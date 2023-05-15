@@ -45,9 +45,11 @@ sppp = spm.SentencePieceProcessor()
 sppp.Load(sp_model)
 
 
-def tokenize_with_spm(s):
-    return ' '.join(sppp.EncodeAsPieces(s)).replace('▁', ' ')
-
+def tokenize_with_spm(s, replace=True):
+    if replace:
+        return ' '.join(sppp.EncodeAsPieces(s)).replace('▁', ' ')
+    else:
+        return ' '.join(sppp.EncodeAsPieces(s))
 
 def check_lang(tokenized_line, lang, ngram_size=4, num_langs=10):
     v, p = lid_model.predict(tokenized_line, k=num_langs)
@@ -60,8 +62,9 @@ def check_lang(tokenized_line, lang, ngram_size=4, num_langs=10):
         sent_score = 0.0
 
     lang_scores = []
-    for ngram in ngrams(tokenized_line.split(), num_ngrams=ngram_size):
-        chunk = ' '.join(ngram)
+
+    for ngram in ngrams(tokenize_with_spm(tokenized_line, replace=False).split(), num_ngrams=ngram_size) if lang == "ja" else ngrams(tokenized_line.split(), num_ngrams=ngram_size):
+        chunk = ' '.join([x.strip() for x in ngram]).replace('▁', '').strip() if lang == "ja" else ' '.join(ngram)
 
         v, p = lid_model.predict(chunk, k=1)
 
