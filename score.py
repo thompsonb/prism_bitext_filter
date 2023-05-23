@@ -76,11 +76,15 @@ sppp.Load(sp_model)
 
 
 def tokenize_with_spm(s):
-    return ' '.join(sppp.EncodeAsPieces(s)).replace('▁', ' ')
+    return sppp.EncodeAsPieces(s)
+
+
+def detok(lst):
+    return ''.join(lst).replace('▁', ' ')
 
 
 def check_lang(tokenized_line, lang, ngram_size=4, num_langs=10):
-    v, p = lid_model.predict(tokenized_line, k=num_langs)
+    v, p = lid_model.predict(detok(tokenized_line), k=num_langs)
 
     lang = lang.lower()  # make sure lower case lang code
 
@@ -90,8 +94,8 @@ def check_lang(tokenized_line, lang, ngram_size=4, num_langs=10):
         sent_score = 0.0
 
     lang_scores = []
-    for ngram in ngrams(tokenized_line.split(), num_ngrams=ngram_size):
-        chunk = ' '.join(ngram)
+    for ngram in ngrams(tokenized_line, num_ngrams=ngram_size):
+        chunk = detok(ngram)
 
         v, p = lid_model.predict(chunk, k=1)
 
@@ -145,8 +149,8 @@ def spm_ngram_overlap_frac(sent0, sent1, num_ngrams=3):
     """
     about 1M lines per min
     """
-    ngrams0 = ngrams(list_of_tokens=sent0.split(), num_ngrams=num_ngrams)
-    ngrams1 = ngrams(list_of_tokens=sent1.split(), num_ngrams=num_ngrams)
+    ngrams0 = ngrams(list_of_tokens=sent0, num_ngrams=num_ngrams)
+    ngrams1 = ngrams(list_of_tokens=sent1, num_ngrams=num_ngrams)
     return overlap_with_dups(ngrams0, ngrams1)
 
 
@@ -180,11 +184,11 @@ def make_blob(stuff,):
     t_tok = tokenize_with_spm(tgt_line)
     
     # git LID scores (both at sentence level and chunk levels)
-    s_lid_score, s_lid_chunk_score = check_lang(src_line.strip(), src_lang, ngram_size=5)
+    s_lid_score, s_lid_chunk_score = check_lang(s_tok, src_lang, ngram_size=5)
     blob['s_lid_score'] = s_lid_score
     blob['s_lid_chunk_score'] = s_lid_chunk_score
     
-    t_lid_score, t_lid_chunk_score = check_lang(tgt_line.strip(), tgt_lang, ngram_size=5)
+    t_lid_score, t_lid_chunk_score = check_lang(t_tok, tgt_lang, ngram_size=5)
     blob['t_lid_score'] = t_lid_score
     blob['t_lid_chunk_score'] = t_lid_chunk_score
     
@@ -193,8 +197,8 @@ def make_blob(stuff,):
         blob[f'overlap_frac_{gram}gram'] = spm_ngram_overlap_frac(s_tok, t_tok, num_ngrams=gram)
 
     # save off length in (sentencepiece) tokens
-    blob['s_len'] = len(s_tok.split())
-    blob['t_len'] = len(t_tok.split())
+    blob['s_len'] = len(s_tok)
+    blob['t_len'] = len(t_tok)
     
     blob['s_hash'] = compute_hash(s_clean)
     blob['t_hash'] = compute_hash(t_clean)
@@ -228,7 +232,7 @@ def score(src_lines, tgt_lines, src_lang, tgt_lang, do_laser, LID_threshold, fou
                 t_to_embed.add(blob['tgt'])
 
 
-    if do_laser:
+    if do_laser and len(s_to_embed) and len(t_to_embed):
         print('using GPU?', torch.cuda.is_available(), flush=True)            
         print('Computing LASER embeddings', flush=True)
         # LASER embeddings

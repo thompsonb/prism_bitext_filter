@@ -65,8 +65,8 @@ Which should print something like this:
  's_lid_score': 0.9667384,
  'src': 'For instance, the central banks of the US, Europe, Japan, and Britain '
         'could accept Brazilian paper at their discount windows.',
- 't_len': 25,
- 't_lid_chunk_score': 0.9230769,
+ 't_len': 26,
+ 't_lid_chunk_score': 0.8636364,
  't_lid_score': 0.9862412,
  'tgt': 'Zum Beispiel könnten die Zentralbanken der USA, Europas, Japans und '
         'Großbritanniens brasilianische Wertpapiere an ihren Diskontschaltern '
